@@ -40,6 +40,16 @@ test("CLI output strings quoted in the slash command still exist in the CLI", ()
   assert.ok(command.includes("representative:"), "slash command no longer quotes the 'representative:' CLI line");
 });
 
+test("slash command does not hardcode the representative-project count (it's adaptive 3-5)", () => {
+  // 4. The slash command said "the four that were auto-selected" while the CLI
+  //    moved to an adaptive 3-5 selection — a hardcoded count in the docs that
+  //    silently lies as soon as the selection logic changes.
+  assert.ok(
+    !/\b(four|three|five) (representative|auto-selected)\b|\bthe (four|three|five) that were\b/i.test(command),
+    "slash command hardcodes a representative-project count",
+  );
+});
+
 test("example repoLabels in the slash command are fictional (acme-*)", () => {
   // Any italicised repo-style example must be an obviously fake name. A real
   // repoLabel here is a privacy leak in a public file.

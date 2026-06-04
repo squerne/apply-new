@@ -21,7 +21,7 @@ The default is **save, don't submit**. Submitting is a separate, explicit action
    node bin/apply-new.mjs prepare \
      --name "<name>" --email "<email>" --city "<city>" --status "<status>"
    ```
-   Show the candidate the line `… representative: …` from the output. This is the auto-selection of representative projects (flagships by significance + diversity by primary type).
+   Show the candidate the line `… representative: …` from the output. This is the auto-selection of representative projects — 3 to 5, adaptive: flagships by significance, plus a 4th/5th slot only when a project adds a new primary type or comparable significance. `--top N` forces a fixed count if the candidate asks.
 
 3. **Read `narrative-input.json`.** It contains:
    - For each representative project: an id (`p1`, `p2`, …), a `repoLabel` (the candidate's own repo directory name — use this to talk to the candidate so they know which project you mean), type tags, sessions, repo areas touched, stack, landing signals, sampled prompts, learning topics, LOCAL repo context.
@@ -75,9 +75,9 @@ The default is **save, don't submit**. Submitting is a separate, explicit action
 
 6. **Show `profile.md`** to the candidate, then ask the four review questions below **ONE AT A TIME, in order**. Wait for an answer before moving to the next. **Do NOT enumerate them in a single block** — the goal is a conversation, not a survey.
 
-   **Question 1 — Representative projects.** State the four that were auto-selected with their repoLabel ("acme-storefront — e-commerce storefront", etc.) and ask if any should be swapped for one from the inventory. After their answer, edit `candidate.json` if needed.
+   **Question 1 — Representative projects.** State the ones that were auto-selected (3 to 5) with their repoLabel ("acme-storefront — e-commerce storefront", etc.) and ask if any should be swapped for one from the inventory. After their answer, edit `candidate.json` if needed.
 
-   **Question 2 — Artifacts (optional).** Artifacts MUST belong to the specific project they are attached to. Do NOT pick URLs from the candidate's `learningTopics` or recent web searches — those are research links, not artifacts. Go through the four representative projects ONE BY ONE, repoLabel by repoLabel:
+   **Question 2 — Artifacts (optional).** Artifacts MUST belong to the specific project they are attached to. Do NOT pick URLs from the candidate's `learningTopics` or recent web searches — those are research links, not artifacts. Go through the representative projects ONE BY ONE, repoLabel by repoLabel:
 
    - For each project, name it ("for *acme-storefront* — the e-commerce storefront — do you have a deploy URL, repo, PR or screenshot that shows THIS specific project?") and wait for the candidate's reply.
    - If they say no for that project, move on to the next. Skipping is fine.

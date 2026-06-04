@@ -22,9 +22,30 @@ function score(p, recentSince) {
   return s;
 }
 
-export function selectRepresentatives(projects, n = 4) {
+// Adaptive count: 3 to 5, decided by the portfolio itself. Three flagships
+// always; a 4th and a 5th slot only when the next-ranked project EARNS it —
+// it covers a primary type the picks don't, or it is nearly as significant
+// as the 3rd pick (>= 60% of its score). A concentrated, homogeneous history
+// stays at 3; a spread, diverse one grows to 5.
+function adaptiveCount(ranked, recentSince) {
+  const primary = (p) => p.type[0] || "exploration";
+  let n = Math.min(3, ranked.length);
+  const types = new Set(ranked.slice(0, n).map(primary));
+  const anchor = ranked[2] ? score(ranked[2], recentSince) : 0;
+  for (let i = n; i < Math.min(ranked.length, 5); i++) {
+    const p = ranked[i];
+    if (!types.has(primary(p)) || score(p, recentSince) >= 0.6 * anchor) {
+      n++;
+      types.add(primary(p));
+    } else break;
+  }
+  return n;
+}
+
+export function selectRepresentatives(projects, n = "auto") {
   const recentSince = recencyCutoff(projects);
   const ranked = [...projects].sort((a, b) => score(b, recentSince) - score(a, recentSince));
+  if (n === "auto" || n == null || !Number.isFinite(+n)) n = adaptiveCount(ranked, recentSince);
   const picked = [];
   const types = new Set();
   const primary = (p) => p.type[0] || "exploration";

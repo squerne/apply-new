@@ -13,7 +13,8 @@
 // Common flags:
 //   --root <dir>                   # logs root (default ~/.claude/projects)
 //   --name "Giulia" --email g@x.io --city Milano --status freelance
-//   --top 4                        # how many representative projects
+//   --top 4                        # force the number of representative projects
+//                                  # (default: adaptive, 3 to 5)
 //   --narrative-file narrative.json
 //   --endpoint https://...         # override PLAYNEW_INTAKE_URL for submit
 //
@@ -38,6 +39,7 @@ import { buildContact } from "../src/contact.mjs";
 import { submitProfile } from "../src/submit.mjs";
 import { buildTrajectory } from "../src/trajectory.mjs";
 import { assessGroundedness } from "../src/groundedness.mjs";
+import { assessStructure, assessAgainstLogs } from "../src/consistency.mjs";
 import { computeAiRelationship } from "../src/ai-relationship.mjs";
 import { computeAgenticLiteracy } from "../src/agentic-literacy.mjs";
 import { computeIntensity } from "../src/intensity.mjs";
@@ -73,9 +75,9 @@ async function loadProfileInputs(out) {
 
   console.log(`[3/5] Deep digest + per-repo clustering (PII redacted: ${parsed.redaction.hits}) ...`);
   const digest = buildDigest(parsed);
-  const projects = selectRepresentatives(digest.projects, +flag("top", "4"));
+  const projects = selectRepresentatives(digest.projects, flag("top") ? +flag("top") : "auto");
   const selected = projects.filter((p) => p.selected);
-  console.log(`      ${digest.projectCount} products, ${selected.length} representative: ${selected.map((p) => `${p.repo}[${p.type[0]}]`).join(", ")}`);
+  console.log(`      ${digest.projectCount} products, ${selected.length}${flag("top") ? "" : " (adaptive 3-5)"} representative: ${selected.map((p) => `${p.repo}[${p.type[0]}]`).join(", ")}`);
 
   const enrichments = selected.map((p) => enrichRepo(p.cwdRaw));
   const trajectory = buildTrajectory(parsed);
@@ -221,6 +223,7 @@ async function cmdSubmit() {
   console.log(`\nNOT submitted: raw logs, local repo context, third-party proper names.`);
 
   // Pre-flight groundedness: how much of the prose is anchored in the data.
+  // Recomputed on the file as it is NOW, not trusted from the embedded score.
   const g = assessGroundedness(profile);
   console.log(`\nGroundedness check`);
   if (g.score == null) {
@@ -233,10 +236,42 @@ async function cmdSubmit() {
     for (const a of g.anomalies) console.log(`    - ${a.where}: "${a.anchor}" (${a.kind})`);
     console.log(`  Consider regenerating, or editing candidate.json before submitting.`);
   }
+  const embedded = profile.groundedness?.score;
+  if (g.score != null && embedded != null && Math.abs(g.score - embedded) > 5) {
+    console.log(`  Note: the file says groundedness ${embedded}% but it recomputes to ${g.score}% — candidate.json was edited after generation.`);
+  }
+
+  // Pre-flight consistency: structural invariants, then re-derivation from
+  // the logs (the ground truth the profile claims to describe).
+  console.log(`\nConsistency check`);
+  const issues = [...assessStructure(profile).issues];
+  let root = flag("root", join(homedir(), ".claude", "projects"));
+  if (flag("project")) root = join(root, flag("project"));
+  if (existsSync(root)) {
+    const digest = buildDigest(readClaudeCode(root));
+    const logs = assessAgainstLogs(profile, digest.projects);
+    issues.push(...logs.issues);
+    for (const w of logs.warnings) console.log(`  ~ ${w}`);
+  } else {
+    console.log(`  ~ no logs at ${root}, skipping log re-derivation (pass --root if they live elsewhere)`);
+  }
+  if (issues.length) {
+    console.log(`  The structured data does not match ${existsSync(root) ? "your logs / its own invariants" : "its own invariants"}:`);
+    for (const i of issues) console.log(`    - ${i}`);
+    console.log(`  If your logs were pruned since generation, regenerate (apply-new generate).`);
+  } else {
+    console.log(`  structured data is internally consistent and matches your logs`);
+  }
 
   if (!has("yes")) {
     console.log(`\nTo confirm:  apply-new submit --yes`);
     return;
+  }
+  if (issues.length && !has("force")) {
+    console.error(`\nConsistency check failed (${issues.length} issue${issues.length > 1 ? "s" : ""}). Submission blocked.`);
+    console.error(`Regenerate the profile (apply-new generate) or pass --force to bypass.`);
+    console.error(`Note: the intake re-checks groundedness and these invariants server-side.`);
+    process.exit(2);
   }
   if (g.score != null && g.score < 60 && !has("force")) {
     console.error(`\nGroundedness is low (${g.score}%). Submission blocked.`);
