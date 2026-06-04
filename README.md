@@ -4,7 +4,7 @@
 
 A CV is a list of what you did, formatted for keyword scans. For work that happens inside agent logs, it's the wrong surface. The signal we care about (how you decompose, how you verify, what you do when the model misunderstands) already exists in your Claude Code sessions. A resume can't see it.
 
-Apply New makes it visible. You run it on your laptop, you see the profile before anyone else does, and you decide whether to share it. There's no scoring or ranking. The profile is a portrait, and a portrait opens a conversation.
+Apply New makes it visible. You run it on your laptop, you see the profile before anyone else does, and you decide whether to share it. There's no scoring or ranking. The profile describes how you work, and it opens a conversation.
 
 ## You'll need
 
@@ -29,13 +29,17 @@ node bin/apply-new.mjs submit --yes
 
 ## What we look at
 
-Four lenses, all built from your logs.
+Six lenses, all built from your logs.
+
+**What you work on.** Three to five fields of work, derived from the evidence of every product in your logs (type of work, stack, code areas, research topics). Each domain carries a count of products and sessions, never a name: "talent operations, 8 products, 14 sessions".
 
 **How you reason.** Cognitive tags derived from concrete signals: *research-first* if your read-to-edit ratio is above 2, *orchestrator* if you delegate to sub-agents 15+ times, *verification-heavy* if checks run in half your projects, *risk-calibrated* if your revert-to-commit ratio stays below 10%. A short paragraph from your Claude on decomposition, verification, error handling, calibrated trust.
 
 **How you work with the model.** One continuous axis from *directing* (long structured prompts, file paths, acceptance criteria) to *co-thinking* (short conversational turns, open questions, the model as a partner). The midpoint is co-construction. Most people switch by context, and the narrative says when.
 
 **How deeply Claude is your practice.** Active days over the observed window, median sessions per active day, session depth, longest streak, peak day. The difference between *daily driver, deep sessions* and *occasional, short bursts on specific tasks*.
+
+**How you spread your work.** Sessions per product, concentration on your top products, products carried across months. Two sessions each across twenty products reads as portfolio steering; nine sessions each across nine products reads as sustained building. Both are legitimate shapes, and they match different projects.
 
 **How fluent you are in the agentic stack.** Three axes: what you use (sub-agents, MCP servers, slash commands you invoke), what you build (skills, commands, hooks, the `CLAUDE.md` files you maintain), and how you organise work (planning, subtask tracking, clarifying before assuming). All counts. Custom MCP servers and custom skills are counted but never named (they can carry client information).
 
