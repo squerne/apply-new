@@ -143,6 +143,8 @@ export function buildDigest(parsed) {
         to: month(new Date(p.lastTs).toISOString()),
         sessions: p.sessions,
         userMessages: p.userMessages,
+        // Code-volume signal for representative selection (edits/writes landed).
+        mutations,
         topAreas: Object.fromEntries(topAreas),
         tech: detectTech([...topAreas.map(([a]) => a), cmdsText]),
         landing: {

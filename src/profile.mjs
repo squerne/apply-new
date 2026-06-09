@@ -3,7 +3,32 @@
 // prose fields come from the narrative step. The Markdown is just a view, so
 // human and agent never diverge.
 
-// --- representative selection: significance, then type diversity -------------
+// --- representative selection: significance leads, diversity breaks ties -----
+//
+// The pick is driven by how SIGNIFICANT the work is, not by how many chat
+// sessions a repo accumulated. Each signal is normalised against the
+// candidate's own portfolio (scale-free: a light user and a heavy user are
+// scored on the same 0..1 axis), then weighted. Recency and type diversity are
+// bounded nudges that can break a near-tie but never outweigh real substance.
+
+// Relative significance weights. The point of taring lives here: if real-data
+// selection looks skewed, adjust these, not the structure.
+const W = { sessions: 0.30, commits: 0.25, mutations: 0.20, span: 0.10, type: 0.15 };
+const CHECKS_BONUS = 0.05;   // verification discipline
+const CHURN_PENALTY = 0.05;  // high revert churn
+const RECENCY_BONUS = 0.15;  // within the last 2 months of the window
+const DIVERSITY_NUDGE = 0.10; // a primary type the picks don't cover yet
+
+// How much each project TYPE counts toward significance. Shipping a product
+// outweighs an exploratory poke even at equal volume.
+const TYPE_WEIGHT = {
+  "product-build": 1.0, "ai-platform": 1.0, "product": 1.0,
+  "feature-work": 0.6, "data-migration": 0.6, "audit-research": 0.6,
+  "agent-tooling": 0.6, "static-site": 0.5, "testing": 0.5,
+  "exploration": 0.2,
+};
+const primary = (p) => p.type?.[0] || "exploration";
+const typeWeight = (p) => TYPE_WEIGHT[primary(p)] ?? 0.5;
 
 // "Recent" = last 2 months of the candidate's own window, not a fixed date.
 // Returns a "YYYY-MM" cutoff or null if the projects don't carry a usable end.
@@ -16,25 +41,54 @@ function recencyCutoff(projects) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function score(p, recentSince) {
-  let s = p.sessions + 0.1 * (p.landing.commits || 0);
-  if (recentSince && p.to && p.to >= recentSince) s += 8;
+const isRecent = (p, recentSince) => !!(recentSince && p.to && p.to >= recentSince);
+
+// Months spanned by a project, from "YYYY-MM" bounds (inclusive, min 1).
+function spanMonths(p) {
+  if (!p.from || !p.to) return 1;
+  const [fy, fm] = p.from.split("-").map(Number);
+  const [ty, tm] = p.to.split("-").map(Number);
+  if (![fy, fm, ty, tm].every(Number.isFinite)) return 1;
+  return Math.max(1, (ty - fy) * 12 + (tm - fm) + 1);
+}
+
+// Build per-portfolio normalisers (the max of each signal, guarded against 0).
+function normalizers(projects) {
+  const max = (f) => Math.max(1, ...projects.map(f));
+  return {
+    sessions: max((p) => p.sessions || 0),
+    commits: max((p) => p.landing?.commits || 0),
+    mutations: max((p) => p.mutations || 0),
+    span: max(spanMonths),
+  };
+}
+
+// Composite significance in roughly [0,1]. No recency or diversity here — those
+// are applied at selection time so the same score drives adaptiveCount cleanly.
+function significance(p, nrm) {
+  let s =
+    W.sessions * ((p.sessions || 0) / nrm.sessions) +
+    W.commits * ((p.landing?.commits || 0) / nrm.commits) +
+    W.mutations * ((p.mutations || 0) / nrm.mutations) +
+    W.span * (spanMonths(p) / nrm.span) +
+    W.type * typeWeight(p);
+  if (p.landing?.checksRun) s += CHECKS_BONUS;
+  if (p.landing?.revertChurn === "high") s -= CHURN_PENALTY;
   return s;
 }
 
-// Adaptive count: 3 to 5, decided by the portfolio itself. Three flagships
-// always; a 4th and a 5th slot only when the next-ranked project EARNS it —
-// it covers a primary type the picks don't, or it is nearly as significant
-// as the 3rd pick (>= 60% of its score). A concentrated, homogeneous history
-// stays at 3; a spread, diverse one grows to 5.
-function adaptiveCount(ranked, recentSince) {
-  const primary = (p) => p.type[0] || "exploration";
+// Adaptive count: 3 to 5, decided by the portfolio itself. Three picks always;
+// a 4th and a 5th slot only when the next-ranked project EARNS it — it covers a
+// primary type the picks don't, or it is nearly as significant as the 3rd pick
+// (>= 60% of its significance). A concentrated, homogeneous history stays at 3;
+// a spread, diverse one grows to 5.
+function adaptiveCount(ranked, sig) {
   let n = Math.min(3, ranked.length);
   const types = new Set(ranked.slice(0, n).map(primary));
-  const anchor = ranked[2] ? score(ranked[2], recentSince) : 0;
+  const anchor = ranked[2] ? sig(ranked[2]) : 0;
   for (let i = n; i < Math.min(ranked.length, 5); i++) {
     const p = ranked[i];
-    if (!types.has(primary(p)) || score(p, recentSince) >= 0.6 * anchor) {
+    if (!types.has(primary(p)) || sig(p) >= 0.6 * anchor) {
       n++;
       types.add(primary(p));
     } else break;
@@ -44,31 +98,27 @@ function adaptiveCount(ranked, recentSince) {
 
 export function selectRepresentatives(projects, n = "auto") {
   const recentSince = recencyCutoff(projects);
-  const ranked = [...projects].sort((a, b) => score(b, recentSince) - score(a, recentSince));
-  if (n === "auto" || n == null || !Number.isFinite(+n)) n = adaptiveCount(ranked, recentSince);
+  const nrm = normalizers(projects);
+  const sig = (p) => significance(p, nrm) + (isRecent(p, recentSince) ? RECENCY_BONUS : 0);
+  // Significance drives the count; the diversity nudge is selection-only.
+  const ranked = [...projects].sort((a, b) => sig(b) - sig(a));
+  if (n === "auto" || n == null || !Number.isFinite(+n)) n = adaptiveCount(ranked, sig);
+
+  // Greedy pick: at each step take the highest adjusted score, where a not-yet-
+  // covered primary type gets a small nudge. Significance leads; the nudge only
+  // breaks near-ties, it can't lift a marginal project over a substantial one.
   const picked = [];
   const types = new Set();
-  const primary = (p) => p.type[0] || "exploration";
-  // 1) flagships: the top half by pure significance, regardless of type.
-  const core = Math.max(1, Math.floor(n / 2));
-  for (const p of ranked) {
-    if (picked.length >= core) break;
-    picked.push(p);
-    types.add(primary(p));
-  }
-  // 2) diversity: fill remaining slots with new primary types.
-  for (const p of ranked) {
-    if (picked.length >= n) break;
-    if (picked.includes(p)) continue;
-    if (!types.has(primary(p))) {
-      picked.push(p);
-      types.add(primary(p));
+  const remaining = new Set(projects);
+  while (picked.length < n && remaining.size) {
+    let best = null, bestScore = -Infinity;
+    for (const p of remaining) {
+      const adj = sig(p) + (types.has(primary(p)) ? 0 : DIVERSITY_NUDGE);
+      if (adj > bestScore) { bestScore = adj; best = p; }
     }
-  }
-  // 3) fill any leftover slots by score.
-  for (const p of ranked) {
-    if (picked.length >= n) break;
-    if (!picked.includes(p)) picked.push(p);
+    picked.push(best);
+    types.add(primary(best));
+    remaining.delete(best);
   }
   const pickedSet = new Set(picked);
   return projects.map((p) => ({ ...p, selected: pickedSet.has(p) }));

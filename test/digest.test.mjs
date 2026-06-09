@@ -63,19 +63,17 @@ test("classifies a sustained product build with many commits", () => {
 
 test("selectRepresentatives recency is relative to the candidate's own window", async () => {
   const { selectRepresentatives } = await import("../src/profile.mjs");
-  // Candidate's latest project ends 2024-12 → recency cutoff is 2024-10.
-  // The older project has slightly more work; the +8 recency bonus on the
-  // recent one must flip the order.
+  // The cutoff is anchored to the candidate's LATEST project (here 2024-12),
+  // not a fixed calendar date, so "recent" means recent for this candidate.
+  // The two projects carry the same substance; only the recency bonus, applied
+  // because "recent" ends within 2 months of 2024-12, breaks the tie.
+  const base = { researchToMutation: 1, delegation: 0, topAreas: {}, tech: [], learningTopics: [], promptSamples: [] };
   const projects = [
-    { repo: "old-flagship", type: ["product-build"], from: "2023-01", to: "2023-12",
-      sessions: 20, landing: { commits: 50 }, researchToMutation: 1, delegation: 0, topAreas: {}, tech: [], learningTopics: [], promptSamples: [] },
-    // Lower raw score, but ends within the last 2 months → recency bonus applies.
-    { repo: "recent", type: ["audit-research"], from: "2024-10", to: "2024-12",
-      sessions: 15, landing: { commits: 10 }, researchToMutation: 5, delegation: 0, topAreas: {}, tech: [], learningTopics: [], promptSamples: [] },
+    { repo: "old", type: ["product-build"], from: "2023-01", to: "2023-06",
+      sessions: 18, mutations: 100, landing: { commits: 20, checksRun: false, revertChurn: "low" }, ...base },
+    { repo: "recent", type: ["product-build"], from: "2024-07", to: "2024-12",
+      sessions: 18, mutations: 100, landing: { commits: 20, checksRun: false, revertChurn: "low" }, ...base },
   ];
-  // old: 20 + 0.1*50 = 25.   recent: 15 + 0.1*10 + 8 = 24.   margin is tight on purpose.
-  // Adjust to make recency the unambiguous winner:
-  projects[1].sessions = 18; // recent: 18 + 1 + 8 = 27 > 25
   const picked = selectRepresentatives(projects, 1).filter((p) => p.selected).map((p) => p.repo);
   assert.deepEqual(picked, ["recent"], "recent project should win once recency is relative");
 });
