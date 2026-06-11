@@ -54,17 +54,25 @@ export function assessAgainstLogs(profile, digestProjects) {
   const warnings = [];
   const byRepo = new Map((digestProjects ?? []).map((p) => [p.repo, p]));
 
+  // The gate is one-directional: claims must not EXCEED the logs. Ongoing use
+  // only grows the logs, so excess claims have exactly two causes — the logs
+  // were pruned after generation (Claude Code's cleanup ages out old
+  // sessions), or the file was inflated by hand. Counting them separately
+  // lets submit name the common, innocent cause and prescribe the fix.
+  let excessClaims = 0;
+  const excess = (msg) => { issues.push(msg); excessClaims++; };
+
   const vol = profile?.volume ?? {};
   const totalSessions = (digestProjects ?? []).reduce((n, p) => n + (p.sessions || 0), 0);
   const totalInstructions = (digestProjects ?? []).reduce((n, p) => n + (p.userMessages || 0), 0);
   if (vol.products != null && vol.products > (digestProjects?.length ?? 0)) {
-    issues.push(`profile claims ${vol.products} products but the logs contain ${digestProjects?.length ?? 0}`);
+    excess(`profile claims ${vol.products} products but the logs contain ${digestProjects?.length ?? 0}`);
   }
   if (vol.sessions != null && vol.sessions > totalSessions) {
-    issues.push(`profile claims ${vol.sessions} sessions but the logs contain ${totalSessions}`);
+    excess(`profile claims ${vol.sessions} sessions but the logs contain ${totalSessions}`);
   }
   if (vol.instructions != null && vol.instructions > totalInstructions) {
-    issues.push(`profile claims ${vol.instructions} instructions but the logs contain ${totalInstructions}`);
+    excess(`profile claims ${vol.instructions} instructions but the logs contain ${totalInstructions}`);
   }
 
   for (const p of profile?.projects ?? []) {
@@ -78,12 +86,12 @@ export function assessAgainstLogs(profile, digestProjects) {
       continue;
     }
     if ((Number(p.sessions) || 0) > (d.sessions || 0)) {
-      issues.push(`${p.id} (${p.repoLabel}): claims ${p.sessions} sessions, logs show ${d.sessions}`);
+      excess(`${p.id} (${p.repoLabel}): claims ${p.sessions} sessions, logs show ${d.sessions}`);
     }
     if ((Number(p.landing?.commits) || 0) > (d.landing?.commits || 0)) {
-      issues.push(`${p.id} (${p.repoLabel}): claims ${p.landing.commits} commits, logs show ${d.landing?.commits ?? 0}`);
+      excess(`${p.id} (${p.repoLabel}): claims ${p.landing.commits} commits, logs show ${d.landing?.commits ?? 0}`);
     }
   }
 
-  return { issues, warnings };
+  return { issues, warnings, excessClaims };
 }
