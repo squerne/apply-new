@@ -369,6 +369,9 @@ export function renderMarkdown(p) {
   if (p.stackAdopted?.length) {
     L.push(`\n## Stack adopted`);
     L.push(p.stackAdopted.join(", "));
+    // Disclosed boundary: detection reads dependencies and touched files, never
+    // .env, so REST-only integrations (an API key, no package) can be missed.
+    L.push(`_Detected from dependencies and files touched; services used only over REST (no package) are not auto-detected._`);
   }
 
   return L.join("\n") + "\n";

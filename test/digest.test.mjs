@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { buildDigest } from "../src/digest.mjs";
 
 function session(sid, cwdRaw, ts, msgs) {
@@ -92,4 +94,64 @@ test("classifies an audit-research project (lots of reads, few mutations)", () =
   };
   const d = buildDigest(parsed);
   assert.ok(d.projects[0].type.includes("audit-research"));
+});
+
+test("stack detection: dependencies + touched extensions + commands, never .env", () => {
+  // Created under the repo (not the OS tmpdir): the digest treats /tmp and
+  // /var/folders paths as ephemeral sandboxes and skips them.
+  const root = mkdtempSync(join(process.cwd(), ".tmp-applynew-stack-"));
+  try {
+    // A real repo on disk: deps in root + a workspace, plus a secrets file.
+    writeFileSync(join(root, "package.json"), JSON.stringify({
+      dependencies: { next: "*", firebase: "*", "@prisma/client": "*" },
+    }));
+    mkdirSync(join(root, "packages", "core"), { recursive: true });
+    writeFileSync(join(root, "packages", "core", "package.json"), JSON.stringify({
+      dependencies: { openai: "*" },
+    }));
+    // Brevo lives ONLY in .env — it must never surface (the tool must not read it).
+    writeFileSync(join(root, ".env"), "BREVO_API_KEY=secret\nSTRAPI_API_TOKEN=secret\n");
+
+    const cwd = root; // cwdRaw points at the real dir so deps are read
+    const parsed = {
+      source: "claude-code",
+      sessions: [session("s1", cwd, ["2026-04-01T10:00:00Z"], [
+        user("work", "2026-04-01T10:00:00Z"),
+        assistant("2026-04-01T10:01:00Z", [
+          tool("Write", { path: `${cwd}/scripts/migrate.py` }), // .py -> Python (touched evidence)
+          tool("Edit", { path: `${cwd}/src/app/page.tsx` }),
+          tool("Bash", { cmd: "uvicorn api.main:app" }),          // -> FastAPI (command evidence)
+        ]),
+      ])],
+    };
+    const tech = buildDigest(parsed).projects[0].tech;
+
+    // Dependencies (across workspaces): Next.js, Firebase, OpenAI, Prisma.
+    assert.ok(tech.includes("Next.js/React"), tech.join(","));
+    assert.ok(tech.includes("Firebase/Firestore"), tech.join(","));
+    assert.ok(tech.includes("OpenAI"), tech.join(","));
+    assert.ok(tech.includes("Prisma"), tech.join(",")); // real dep -> not a false positive
+    // Touched evidence: a .py file and a uvicorn command.
+    assert.ok(tech.includes("Python"), tech.join(","));
+    assert.ok(tech.includes("FastAPI"), tech.join(","));
+    // Privacy: services that exist ONLY in .env are never detected.
+    assert.ok(!tech.some((t) => /brevo/i.test(t)), `.env leaked Brevo: ${tech.join(",")}`);
+    assert.ok(!tech.some((t) => /strapi/i.test(t)), `.env leaked Strapi: ${tech.join(",")}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stack detection: a path that merely mentions a library is not a false positive", () => {
+  // No package.json on disk, a path containing "prisma", no prisma command.
+  const cwd = "/Users/matteo/Github/no-deps-repo";
+  const parsed = {
+    source: "claude-code",
+    sessions: [session("s1", cwd, ["2026-04-01T10:00:00Z"], [
+      user("x", "2026-04-01T10:00:00Z"),
+      assistant("2026-04-01T10:01:00Z", [tool("Edit", { path: `${cwd}/src/lib/prisma/client.ts` })]),
+    ])],
+  };
+  const tech = buildDigest(parsed).projects[0].tech;
+  assert.ok(!tech.includes("Prisma"), `path "prisma" became a false positive: ${tech.join(",")}`);
 });

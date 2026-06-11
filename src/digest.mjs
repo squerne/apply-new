@@ -6,6 +6,9 @@
 // learning trajectory (what was searched for). Everything stays redacted and
 // keyed by repo, so worktrees of one product collapse into one project.
 
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 const ms = (iso) => (iso ? Date.parse(iso) : NaN);
 const month = (iso) => (iso ? new Date(ms(iso)).toISOString().slice(0, 7) : null);
 
@@ -36,26 +39,96 @@ function toArea(path, key) {
   return parts.slice(0, 3).join("/") || null;
 }
 
-const TECH = [
-  [/supabase/i, "Supabase/Postgres"],
-  [/inngest/i, "Inngest (job event-driven)"],
-  [/playwright|\/e2e\//i, "Playwright (E2E)"],
-  [/tailwind/i, "Tailwind"],
-  [/shadcn/i, "shadcn/ui"],
-  [/\bzod\b/i, "Zod"],
-  [/prisma/i, "Prisma"],
-  [/next\.config|\/app\/.*\.tsx?$/i, "Next.js/React"],
-  [/vite\.config|\bvite\b/i, "Vite/React"],
-  [/drizzle/i, "Drizzle"],
-  [/stripe/i, "Stripe"],
-  [/fastapi|uvicorn|\bstarlette\b/i, "FastAPI"],
-  [/\.py$|pyproject\.toml|requirements\.txt/i, "Python"],
-];
-const detectTech = (blobs) => {
-  const f = new Set();
-  for (const s of blobs) for (const [re, l] of TECH) if (re.test(s)) f.add(l);
-  return [...f];
+// --- Stack detection -------------------------------------------------------
+//
+// Two evidence streams, merged. They answer different questions and both belong:
+//   1. package.json DEPENDENCIES across workspaces — what the project *uses*.
+//   2. The files and commands the sessions actually TOUCHED — what the candidate
+//      *worked with*, anchored to evidence (file extensions + command text).
+//
+// We never read .env, not even key names (CONTRIBUTING: privacy — "the tool
+// never opens your secrets file"). The cost is that services integrated only
+// over REST (an API key, no npm package) are not auto-detected; that is a
+// disclosed boundary (see the stack note in src/profile.mjs), not a silent miss.
+//
+// Path heuristics are NOT used for libraries: a route that contains the word
+// "prisma" or a stray vite.config is not evidence the project depends on it.
+// Libraries come from dependencies; languages/formats from touched extensions;
+// runnable tools from command text.
+
+// File extension -> language/format label. The "extension tally": a touched
+// file is direct evidence the candidate worked with that language/format.
+const EXT_LABELS = {
+  py: "Python", rb: "Ruby", go: "Go", rs: "Rust", java: "Java", kt: "Kotlin",
+  swift: "Swift", php: "PHP", sql: "SQL", sh: "Shell", vue: "Vue",
+  svelte: "Svelte", mdx: "MDX", tf: "Terraform", proto: "Protobuf",
 };
+
+// Command-text evidence: tools that surface in what the candidate actually RAN
+// and that dependency scanning can't see (Python-ecosystem tools, deploy CLIs).
+// LIBRARIES are deliberately NOT detected here — they come from dependencies
+// only, so a library merely mentioned in a command never becomes a false
+// positive (this is what produced the spurious "Prisma" the issue flagged).
+const CMD_LABELS = [
+  [/uvicorn|fastapi|\bstarlette\b/i, "FastAPI"],
+  [/\bpytest\b/i, "pytest"],
+  [/\bwrangler\b/i, "Cloudflare"],
+];
+
+// Dependency name -> label. Authoritative for libraries.
+const DEP_LABELS = [
+  [/^next$|^react$/, "Next.js/React"], [/^typescript$/, "TypeScript"], [/^vite$/, "Vite/React"],
+  [/supabase/, "Supabase"], [/^pg$|^postgres/, "Postgres"], [/^firebase/, "Firebase/Firestore"],
+  [/inngest/, "Inngest (event-driven jobs)"], [/strapi/, "Strapi (headless CMS)"], [/cloudinary/, "Cloudinary"],
+  [/^stripe$/, "Stripe"], [/next-auth/, "NextAuth"], [/resend/, "Resend (email)"],
+  [/posthog/, "PostHog (analytics)"], [/anthropic/, "Anthropic SDK"], [/^openai$/, "OpenAI"],
+  [/google\/gen|generative-ai/, "Google Gemini"], [/elevenlabs/, "ElevenLabs"], [/vercel/, "Vercel"],
+  [/tailwind/, "Tailwind"], [/shadcn/, "shadcn/ui"], [/radix/, "Radix UI"],
+  [/framer-motion/, "Framer Motion"], [/recharts/, "Recharts"], [/tiptap/, "TipTap (rich text)"],
+  [/react-pdf|jspdf/, "React-PDF"], [/puppeteer|chromium/, "Puppeteer (PDF)"], [/^docx$|mammoth/, "docx/mammoth"],
+  [/mdx/, "MDX"], [/react-hook-form/, "React Hook Form"], [/^zod$/, "Zod"],
+  [/vitest/, "Vitest"], [/playwright/, "Playwright (E2E)"], [/^turbo$|turborepo/, "Turborepo (monorepo)"],
+  [/^prisma$|@prisma/, "Prisma"], [/drizzle-orm/, "Drizzle"],
+];
+
+const readJSON = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
+
+// Dependency names across the repo root and its apps/* and packages/* workspaces.
+function workspaceDepNames(root) {
+  const names = new Set();
+  const pkgs = [];
+  const tryDir = (d) => { const pj = join(d, "package.json"); if (existsSync(pj)) pkgs.push(pj); };
+  tryDir(root);
+  for (const sub of ["apps", "packages"]) {
+    const dir = join(root, sub);
+    if (existsSync(dir)) { try { for (const e of readdirSync(dir)) tryDir(join(dir, e)); } catch {} }
+  }
+  for (const pj of pkgs) {
+    const j = readJSON(pj);
+    if (j) for (const k of Object.keys({ ...(j.dependencies || {}), ...(j.devDependencies || {}) })) names.add(k.toLowerCase());
+  }
+  return names;
+}
+
+// Merge the two evidence streams into one deduped stack list.
+function detectStack({ cwdRaw, exts, cmdsText }) {
+  const labels = new Set();
+  if (cwdRaw && existsSync(cwdRaw)) {
+    for (const name of workspaceDepNames(cwdRaw)) for (const [re, l] of DEP_LABELS) if (re.test(name)) labels.add(l);
+  }
+  for (const ext of Object.keys(exts || {})) if (EXT_LABELS[ext]) labels.add(EXT_LABELS[ext]);
+  for (const [re, l] of CMD_LABELS) if (re.test(cmdsText || "")) labels.add(l);
+  return [...labels];
+}
+
+// Extension of a (POSIX-normalised) file path, lowercased; null when none.
+function fileExt(path) {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  return /^[a-z0-9]{1,5}$/.test(ext) ? ext : null;
+}
 
 function classify(p) {
   const tags = [];
@@ -90,7 +163,7 @@ export function buildDigest(parsed) {
     if (!byRepo.has(key)) {
       byRepo.set(key, {
         repo: key, cwdRaw: s.cwdRaw || "", sessions: 0, userMessages: 0, prompts: [],
-        toolHist: {}, areas: {}, cmds: [], webQueries: [],
+        toolHist: {}, areas: {}, exts: {}, cmds: [], webQueries: [],
         delegation: 0, planning: 0, firstTs: null, lastTs: null,
       });
     }
@@ -112,6 +185,7 @@ export function buildDigest(parsed) {
         if (PLANNING.has(u.name)) p.planning++;
         const area = u.path ? toArea(u.path, key) : null;
         if (area) p.areas[area] = (p.areas[area] || 0) + 1;
+        if (u.path) { const e = fileExt(u.path); if (e) p.exts[e] = (p.exts[e] || 0) + 1; }
         if (u.cmd) p.cmds.push(u.cmd);
         if (u.q) p.webQueries.push(u.q);
       }
@@ -146,7 +220,7 @@ export function buildDigest(parsed) {
         // Code-volume signal for representative selection (edits/writes landed).
         mutations,
         topAreas: Object.fromEntries(topAreas),
-        tech: detectTech([...topAreas.map(([a]) => a), cmdsText]),
+        tech: detectStack({ cwdRaw: p.cwdRaw, exts: p.exts, cmdsText }),
         landing: {
           checksRun: /eslint|tsc|typecheck|playwright|npm (run )?build|pnpm build|npm test|pnpm test/i.test(cmdsText),
           commits, reverts,
