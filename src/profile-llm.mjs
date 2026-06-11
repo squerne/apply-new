@@ -206,10 +206,21 @@ export function validateNarrative(n, ctx) {
 }
 
 // Returns { narrative, input }. narrative is null if no key and no override.
+// An explicit --narrative-file always wins over the env key: the API path
+// sends the narrative input off-machine, so it must never engage silently
+// or discard a hand-curated narrative just because a key is in the env.
 export async function generateNarrative(selected, enrichments, { overrideFile, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects } = {}) {
   const input = narrativeInput(selected, enrichments, trajectory, compactionSummaries, aiRelationship, agenticLiteracy, intensity, distribution, allProjects);
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (key) return { narrative: validateNarrative(await callAnthropic(input, key), "API"), input };
   if (overrideFile) return { narrative: validateNarrative(JSON.parse(readFileSync(overrideFile, "utf8")), overrideFile), input };
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (key) {
+    console.error(
+      "[apply-new] ANTHROPIC_API_KEY is set: the narrative input (project labels, README/CLAUDE.md excerpts,\n" +
+        "            dependency names, commit subjects, sampled prompts) is being sent to api.anthropic.com.\n" +
+        "            To stay fully local until submit, unset the key and use the /apply-new slash command\n" +
+        "            (subscription path) or `prepare` + a hand-written narrative file. See PRIVACY.md."
+    );
+    return { narrative: validateNarrative(await callAnthropic(input, key), "API"), input };
+  }
   return { narrative: null, input };
 }

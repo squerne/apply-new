@@ -1,8 +1,8 @@
 # Privacy & policy — Apply New
 
-Last updated: 2026-05-28
+Last updated: 2026-06-11
 
-Apply New is a tool that turns your Claude Code logs into an anonymised work profile, used by Play New (a business unit of Cosmico Srl) to evaluate candidates for open projects.
+Apply New is a tool that turns your Claude Code logs into an anonymised work profile, submitted as a job application to Play New (a business unit of Cosmico Srl). It is a report — a photograph of how you work with AI — not a score, a ranking, or an automated decision about you: a person reads it and decides whether to start a conversation ([ADR-001](docs/adr/001-just-a-report.md)).
 
 This document explains what we do with the data you choose to send.
 
@@ -26,12 +26,22 @@ What we **never** collect: client names, product names, person names, repository
 
 The narrative is written under hard constraints: no proper names, evidence-based only, no hyperbole. A pre-submit *groundedness check* verifies that the prose anchors (numbers, technology names, type tags, year-months) trace back to the structured data.
 
+## 2a. The narrative step: three paths, one caveat
+
+The short prose in your profile is generated in one of three ways, and they differ in what leaves your machine **before** submit:
+
+- **Subscription path (default, recommended):** the `/apply-new` slash command runs inside your own Claude Code session. The narrative input never goes anywhere your ordinary Claude usage doesn't already go. Fully local until submit.
+- **Manual path:** `prepare` writes the narrative input to a local file; you hand-write `narrative.json` and run `finalize`. Nothing leaves your machine until submit. An explicit `--narrative-file` always takes precedence over an API key in your environment.
+- **API path:** if `ANTHROPIC_API_KEY` is set and no narrative file is given, the narrative input — the real labels of your selected projects, a README/CLAUDE.md excerpt (up to 1,200 characters), up to 60 dependency names, 20 commit subjects, and sampled prompts (PII-redacted, but not name-stripped) — is sent to **api.anthropic.com** under *your own* key. Play New never sees this exchange; it is between you and Anthropic, governed by Anthropic's API terms. But it does leave your machine before submit, so the tool prints a warning when this path engages. If you work under NDA or prefer everything local, use the subscription or manual path.
+
+The name-stripping described in section 2 (no repository names, no client names in what *we* receive) applies to what is transmitted to Play New at submit; it cannot retroactively apply to what you choose to send to Anthropic via your own key.
+
 ## 3. Why we collect it (purpose)
 
 To **match you to the right project** at Play New. Concretely:
 - See how you work with AI (decomposition, verification, orchestration).
 - Compare your skills and stack against open projects.
-- Decide whether to invite you to a conversation.
+- Decide — a person reading the report, never the tool — whether to invite you to a conversation.
 
 We **do not**:
 - Train AI models on your data.
@@ -64,7 +74,7 @@ You have the right to:
 Under EU Regulation 2024/1689 (the AI Act), Annex III §4(a), AI systems used to "analyse and filter job applications and evaluate candidates" are classified as **high-risk**. Apply New is treated as such. The obligations we take on:
 
 - **Transparency.** This file and the [README](README.md) describe in plain terms what the tool measures, how the tags are derived, and what the model is asked to do — including the agentic-literacy counts (built-in vs custom, with custom names never exposed), the AI-relationship axis, the trajectory shifts, and the practice-intensity signals. The source code is public on GitHub.
-- **Human oversight.** No automated decision is made about you. A person at Play New reads each profile and decides whether to follow up. The AI generates the profile and computes screening metrics; it does not rank, score against others, or filter candidates.
+- **Human oversight.** No automated decision is made about you. A person at Play New reads each profile and decides whether to follow up. The AI generates the profile and computes screening metrics; it does not rank, score against others, or filter candidates. The bright line, recorded in [ADR-001](docs/adr/001-just-a-report.md): AI may score the *artifact* — the authenticity and groundedness scores measure whether your logs are internally consistent and whether the prose tracks the data — never you. On our side, profiles are stored and presented to humans unranked: no sorting, filtering, or thresholding on any profile-derived field.
 - **Disclosure.** You are interacting with an AI tool. The narrative parts of your profile (summary, cognitive narrative, trajectory narrative, per-project descriptions) are model-generated.
 - **Data governance.** Raw logs stay on your machine. Only a redacted, consented subset is transmitted, with declared retention. Storage is in the EU.
 - **Logging.** We keep server-side logs of API requests (timestamps, status codes) for security and debugging, separate from the application data.

@@ -45,11 +45,13 @@ Six lenses, all built from your logs.
 
 Plus a trajectory block (how your behavior shifted across the observed window), three to five representative projects (adaptive: flagships by significance, extra slots only for type diversity or comparable significance), and a groundedness check (the prose has to track back to the data; below 60%, submission is blocked).
 
-At submit time everything is re-checked, not trusted: groundedness is recomputed on the file as it is now, the structured numbers are re-derived from your logs (the profile can't claim more sessions or commits than the logs contain), and the intake runs the same groundedness and consistency checks server-side on what it receives. A hand-edited `candidate.json` doesn't survive the trip. Like the authenticity score, this is a screen, not proof.
+At submit time everything is re-checked, not trusted: groundedness is recomputed on the file as it is now, the structured numbers are re-derived from your logs (the profile can't claim more sessions or commits than the logs contain), and the intake recomputes groundedness and the structural invariants server-side on what it receives. An incoherent hand-edit of `candidate.json` doesn't survive the trip; the log-level re-derivation runs only on your machine, since your logs never leave it. Like the authenticity score, this is a screen, not proof.
 
 ## What it isn't
 
 It isn't a personality test, and the cognitive tags are descriptive: there's no "better" tag, only different patterns. The profile doesn't compare you with anyone else, and it doesn't predict performance.
+
+It doesn't evaluate you, and nothing downstream does either. The only scores in the pipeline (authenticity, groundedness) measure the *report's* integrity — whether the logs are internally consistent and the prose tracks the data — never you. On our side, profiles reach humans unranked: nothing sorts, filters, or thresholds candidates on any profile field. A person reads the report and decides whether to invite you to a conversation. This is a recorded commitment ([ADR-001](docs/adr/001-just-a-report.md)), not marketing.
 
 It doesn't replace a conversation, or a live task in our repo. The decision about humans stays with humans.
 
@@ -80,7 +82,7 @@ If you spot something we should change, [open an issue](https://github.com/Play-
 | `finalize --narrative-file out/narrative.json` | finalize after `prepare` |
 | `submit --yes` | send to Play New |
 
-All commands run as `node bin/apply-new.mjs <sub>` or as `apply-new <sub>` after `npm link`. Common flags: `--name`, `--email`, `--city`, `--status`, `--top N` (force the project count; default is adaptive 3–5), `--root <dir>`. Without Claude Code, set `ANTHROPIC_API_KEY` and the narrative goes through the API instead of your subscription.
+All commands run as `node bin/apply-new.mjs <sub>` or as `apply-new <sub>` after `npm link`. Common flags: `--name`, `--email`, `--city`, `--status`, `--top N` (force the project count; default is adaptive 3–5), `--root <dir>`. Without Claude Code, set `ANTHROPIC_API_KEY` and the narrative goes through the API instead of your subscription — note that on this path the narrative input (project labels, README/CLAUDE.md excerpts, dependency names, commit subjects, sampled prompts) is sent to api.anthropic.com under your own key, before any name-stripping; the tool warns when this happens, and an explicit `--narrative-file` always takes precedence over the key. The subscription and manual paths stay fully local until submit. Details in [PRIVACY.md](PRIVACY.md).
 
 ## Tests
 
