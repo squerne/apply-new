@@ -36,6 +36,16 @@ export function assessStructure(profile) {
     issues.push(`volume.sessions is ${vol.sessions} but per-project sessions sum to ${sessions}`);
   }
 
+  // Coverage invariant: the profile cannot contain more sessions than its
+  // sources captured (capture counts include ephemeral sessions the digest
+  // later drops, so capture is an upper bound on volume).
+  if (Array.isArray(profile?.sources) && profile.sources.length) {
+    const captured = profile.sources.reduce((n, s) => n + (Number(s.sessions) || 0), 0);
+    if (vol.sessions != null && vol.sessions > captured) {
+      issues.push(`volume.sessions is ${vol.sessions} but the sources block records only ${captured} sessions read`);
+    }
+  }
+
   const auth = profile?.authenticity?.score;
   if (auth != null && (auth < 0 || auth > 100)) issues.push(`authenticity.score out of range: ${auth}`);
   const ground = profile?.groundedness?.score;
