@@ -369,9 +369,12 @@ export function renderMarkdown(p) {
   if (p.stackAdopted?.length) {
     L.push(`\n## Stack adopted`);
     L.push(p.stackAdopted.join(", "));
-    // Disclosed boundary: detection reads dependencies and touched files, never
-    // .env, so REST-only integrations (an API key, no package) can be missed.
-    L.push(`_Detected from dependencies and files touched; services used only over REST (no package) are not auto-detected._`);
+    // Disclosed boundaries — detection reads package.json + touched files, never
+    // .env: (1) deps reflect the repo as it stands now, not at session time;
+    // (2) npm manifests only — no pyproject/requirements; (3) deps are absent if
+    // the project folder no longer exists; (4) REST-only services (an API key,
+    // no package) are not auto-detected.
+    L.push(`_Stack as currently declared in the repo: from package.json dependencies (npm manifests only) and the files touched. Dependencies are unavailable if the project folder no longer exists, and services used only over REST (no package) are not auto-detected._`);
   }
 
   return L.join("\n") + "\n";

@@ -69,15 +69,17 @@ const EXT_LABELS = {
 // LIBRARIES are deliberately NOT detected here — they come from dependencies
 // only, so a library merely mentioned in a command never becomes a false
 // positive (this is what produced the spurious "Prisma" the issue flagged).
+// Anchored to a whitespace-delimited token so `cat docs/fastapi-notes.md` does
+// NOT match — only a tool in executable/argument position does.
 const CMD_LABELS = [
-  [/uvicorn|fastapi|\bstarlette\b/i, "FastAPI"],
-  [/\bpytest\b/i, "pytest"],
-  [/\bwrangler\b/i, "Cloudflare"],
+  [/(?:^|\s)(?:uvicorn|fastapi|starlette)(?:\s|$)/im, "FastAPI"],
+  [/(?:^|\s)pytest(?:\s|$)/im, "pytest"],
+  [/(?:^|\s)wrangler(?:\s|$)/im, "Cloudflare"],
 ];
 
 // Dependency name -> label. Authoritative for libraries.
 const DEP_LABELS = [
-  [/^next$|^react$/, "Next.js/React"], [/^typescript$/, "TypeScript"], [/^vite$/, "Vite/React"],
+  [/^next$|^react$/, "Next.js/React"], [/^typescript$/, "TypeScript"], [/^vite$/, "Vite"],
   [/supabase/, "Supabase"], [/^pg$|^postgres/, "Postgres"], [/^firebase/, "Firebase/Firestore"],
   [/inngest/, "Inngest (event-driven jobs)"], [/strapi/, "Strapi (headless CMS)"], [/cloudinary/, "Cloudinary"],
   [/^stripe$/, "Stripe"], [/next-auth/, "NextAuth"], [/resend/, "Resend (email)"],
@@ -93,32 +95,85 @@ const DEP_LABELS = [
 
 const readJSON = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
 
-// Dependency names across the repo root and its apps/* and packages/* workspaces.
+// Resolve a working dir to its repo root: the nearest ancestor holding a .git
+// entry (the repo boundary). A session run in a subdir (e.g. apps/web) thus
+// scans the whole repo, not just its corner. Falls back to the dir itself.
+function findRepoRoot(cwd) {
+  let dir = cwd;
+  for (let i = 0; i < 64 && dir; i++) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dir.slice(0, dir.lastIndexOf("/"));
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return cwd;
+}
+
+function listDirs(parent) {
+  if (!existsSync(parent)) return [];
+  try { return readdirSync(parent, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(parent, e.name)); }
+  catch { return []; }
+}
+
+// Workspace package dirs: honor the root package.json "workspaces" globs when
+// present (npm/yarn array, or { packages: [...] }); fall back to the common
+// apps/* + packages/* layout otherwise.
+function workspaceDirs(root, rootPkg) {
+  const globs = Array.isArray(rootPkg?.workspaces) ? rootPkg.workspaces
+    : Array.isArray(rootPkg?.workspaces?.packages) ? rootPkg.workspaces.packages : null;
+  if (!globs) return [...listDirs(join(root, "apps")), ...listDirs(join(root, "packages"))];
+  const dirs = [];
+  for (const g of globs) {
+    if (g.endsWith("/*")) dirs.push(...listDirs(join(root, g.slice(0, -2))));
+    else dirs.push(join(root, g));
+  }
+  return dirs;
+}
+
+// Dependency names across the repo root and its workspaces. npm manifests only.
 function workspaceDepNames(root) {
   const names = new Set();
-  const pkgs = [];
-  const tryDir = (d) => { const pj = join(d, "package.json"); if (existsSync(pj)) pkgs.push(pj); };
-  tryDir(root);
-  for (const sub of ["apps", "packages"]) {
-    const dir = join(root, sub);
-    if (existsSync(dir)) { try { for (const e of readdirSync(dir)) tryDir(join(dir, e)); } catch {} }
+  const rootPkgPath = join(root, "package.json");
+  const rootPkg = readJSON(rootPkgPath);
+  const pkgPaths = rootPkg ? [rootPkgPath] : [];
+  for (const d of workspaceDirs(root, rootPkg)) {
+    const pj = join(d, "package.json");
+    if (existsSync(pj)) pkgPaths.push(pj);
   }
-  for (const pj of pkgs) {
+  for (const pj of pkgPaths) {
     const j = readJSON(pj);
     if (j) for (const k of Object.keys({ ...(j.dependencies || {}), ...(j.devDependencies || {}) })) names.add(k.toLowerCase());
   }
   return names;
 }
 
-// Merge the two evidence streams into one deduped stack list.
-function detectStack({ cwdRaw, exts, cmdsText }) {
+// Merge the two evidence streams into one deduped stack list. Exported so it can
+// be unit-tested against an on-disk fixture directly (buildDigest applies the
+// ephemeral-path filter, which would drop a fixture created under /tmp).
+export function detectStack({ cwdRaw, exts, cmdsText }) {
   const labels = new Set();
   if (cwdRaw && existsSync(cwdRaw)) {
-    for (const name of workspaceDepNames(cwdRaw)) for (const [re, l] of DEP_LABELS) if (re.test(name)) labels.add(l);
+    for (const name of workspaceDepNames(findRepoRoot(cwdRaw))) {
+      for (const [re, l] of DEP_LABELS) if (re.test(name)) labels.add(l);
+    }
   }
   for (const ext of Object.keys(exts || {})) if (EXT_LABELS[ext]) labels.add(EXT_LABELS[ext]);
   for (const [re, l] of CMD_LABELS) if (re.test(cmdsText || "")) labels.add(l);
   return [...labels];
+}
+
+// Every label the detector can emit. Exported so the groundedness verifier
+// derives its tech lexicon from the SAME source as detection (tokenising these
+// the same way it tokenises the stack), instead of a separate hardcoded list
+// that silently drifts as the maps grow.
+export function labelVocabulary() {
+  return [...new Set([...Object.values(EXT_LABELS), ...CMD_LABELS.map(([, l]) => l), ...DEP_LABELS.map(([, l]) => l)])];
+}
+
+// First cwd in a cluster that still exists on disk (else the first seen).
+function resolveCwd(cwds, fallback) {
+  for (const c of cwds) if (c && existsSync(c)) return c;
+  return cwds[0] || fallback || "";
 }
 
 // Extension of a (POSIX-normalised) file path, lowercased; null when none.
@@ -162,12 +217,13 @@ export function buildDigest(parsed) {
     const key = repoKey(s.cwdRedacted || cwd);
     if (!byRepo.has(key)) {
       byRepo.set(key, {
-        repo: key, cwdRaw: s.cwdRaw || "", sessions: 0, userMessages: 0, prompts: [],
+        repo: key, cwdRaw: s.cwdRaw || "", cwds: [], sessions: 0, userMessages: 0, prompts: [],
         toolHist: {}, areas: {}, exts: {}, cmds: [], webQueries: [],
         delegation: 0, planning: 0, firstTs: null, lastTs: null,
       });
     }
     const p = byRepo.get(key);
+    if (s.cwdRaw && !p.cwds.includes(s.cwdRaw)) p.cwds.push(s.cwdRaw);
     p.sessions++;
     for (const m of s.messages) {
       const t = ms(m.ts);
@@ -202,6 +258,9 @@ export function buildDigest(parsed) {
       const commits = (cmdsText.match(/git commit/g) || []).length;
       const reverts = (cmdsText.match(/git revert|git reset --hard|git checkout -- /g) || []).length;
       const designQueries = p.webQueries.filter((q) => DESIGN_RE.test(q)).length;
+      // First cluster cwd that still exists — a deleted first worktree must not
+      // disable dependency detection for the whole cluster.
+      const cwdRaw = resolveCwd(p.cwds, p.cwdRaw);
       const ctx = {
         mutations, designQueries,
         researchToMutation: mutations ? +(research / mutations).toFixed(2) : null,
@@ -211,7 +270,7 @@ export function buildDigest(parsed) {
       };
       return {
         repo: p.repo,
-        cwdRaw: p.cwdRaw, // local-only
+        cwdRaw, // local-only; first existing cwd in the cluster
         type: classify(ctx),
         from: month(new Date(p.firstTs).toISOString()),
         to: month(new Date(p.lastTs).toISOString()),
@@ -220,7 +279,7 @@ export function buildDigest(parsed) {
         // Code-volume signal for representative selection (edits/writes landed).
         mutations,
         topAreas: Object.fromEntries(topAreas),
-        tech: detectStack({ cwdRaw: p.cwdRaw, exts: p.exts, cmdsText }),
+        tech: detectStack({ cwdRaw, exts: p.exts, cmdsText }),
         landing: {
           checksRun: /eslint|tsc|typecheck|playwright|npm (run )?build|pnpm build|npm test|pnpm test/i.test(cmdsText),
           commits, reverts,
